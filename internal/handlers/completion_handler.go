@@ -118,6 +118,8 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // generateCompletion streams a code completion from Ollama.
 func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.ResponseWriter, req CompletionRequest) error {
+	startTime := time.Now()
+
 	prompt, err := Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(ch.promptTmpl)
 	if err != nil {
 		return err
@@ -132,6 +134,7 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 	if ch.numPredict < numPredict {
 		numPredict = ch.numPredict
 	}
+
 	genReq := api.GenerateRequest{
 		Model:  ch.model,
 		Prompt: prompt,
@@ -145,8 +148,14 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 	}
 
 	done := make(chan struct{})
-	err = ch.api.Generate(ctx, &genReq, func(resp api.GenerateResponse) error {
-		ch.logger.Debug("Chunk generated", zap.String("chunk", resp.Response))
+	var genErr error
+	var totalChunks []string
+
+	// Always return nil error so the stream ends gracefully
+	_ = ch.api.Generate(ctx, &genReq, func(resp api.GenerateResponse) error {
+		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp))
+
+		totalChunks = append(totalChunks, resp.Response)
 
 		response := CompletionResponse{
 			Id:      uuid.New().String(),
@@ -154,30 +163,58 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 			Choices: []ChoiceResponse{{Text: resp.Response, Index: 0}},
 		}
 
-		// SSE formatting
 		if _, err := fmt.Fprintf(w, "data: "); err != nil {
-			return err
+			ch.logger.Warn("Failed to write SSE prefix", zap.Error(err))
+			return nil
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			return err
+			ch.logger.Warn("Failed to write SSE response", zap.Error(err))
+			return nil
 		}
 		if _, err := fmt.Fprintf(w, "\n\n"); err != nil {
-			return err
+			ch.logger.Warn("Failed to write SSE suffix", zap.Error(err))
+			return nil
 		}
 
 		if resp.Done {
 			close(done)
 		}
-		return nil
+		return nil // ignore generator errors; keep stream
 	})
 
-	if err == nil {
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-		case <-done:
-		}
+	// Wait for either context timeout or done signal
+	select {
+	case <-ctx.Done():
+		genErr = ctx.Err()
+	case <-done:
+		genErr = nil
 	}
 
-	return err
+	// If there was an error, send a final "empty" chunk with durations
+	if genErr != nil {
+		endTime := time.Now()
+		finalChunk := map[string]interface{}{
+			"chunk": map[string]interface{}{
+				"model":                ch.model,
+				"created_at":           endTime.Format(time.RFC3339Nano),
+				"response":             "",
+				"done":                 true,
+				"context":              []interface{}{},
+				"total_duration":       endTime.Sub(startTime).Nanoseconds(),
+				"load_duration":        0,
+				"prompt_eval_count":    0,
+				"prompt_eval_duration": 0,
+				"eval_count":           0,
+				"eval_duration":        0,
+			},
+		}
+		ch.logger.Warn("Generator ended with error", zap.Error(genErr))
+
+		fmt.Fprintf(w, "data: ")
+		_ = json.NewEncoder(w).Encode(finalChunk)
+		fmt.Fprintf(w, "\n\n")
+
+	}
+
+	return nil
 }
