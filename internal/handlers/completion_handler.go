@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// CompletionRequest is the request sent to the completion handler
+// CompletionRequest represents the request sent to the completion handler.
 type CompletionRequest struct {
 	Extra struct {
 		Language          string `json:"language"`
@@ -32,7 +32,7 @@ type CompletionRequest struct {
 	TopP        int      `json:"top_p"`
 }
 
-// Logprobs is the logprobs returned by the CompletionResponse
+// Logprobs represents token log probabilities.
 type Logprobs struct {
 	Tokens []struct {
 		Token   string  `json:"token"`
@@ -40,7 +40,7 @@ type Logprobs struct {
 	} `json:"tokens"`
 }
 
-// ChoiceResponse is the response returned CompletionResponse
+// ChoiceResponse is a single completion choice.
 type ChoiceResponse struct {
 	Text         string `json:"text"`
 	Index        int    `json:"index"`
@@ -48,91 +48,88 @@ type ChoiceResponse struct {
 	FinishReason string `json:"finish_reason"`
 }
 
-// CompletionResponse is the response returned by the CompletionHandler
+// CompletionResponse is the full response returned to the client.
 type CompletionResponse struct {
 	Id      string           `json:"id"`
 	Created int64            `json:"created"`
 	Choices []ChoiceResponse `json:"choices"`
 }
 
-// Prompt is an repreentation of a prompt with suffi and prefix
+// Prompt represents a FIM prompt with prefix/suffix.
 type Prompt struct {
 	Prefix string
 	Suffix string
-	Logger *zap.Logger
 }
 
 func (p Prompt) Generate(tmpl *template.Template) string {
-	var buf = new(bytes.Buffer)
-	err := tmpl.Execute(buf, p)
-
-	if err != nil {
-		p.Logger.Fatal("Error parsing the prompt template", zap.Error(err))
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, p); err != nil {
+		panic("Error executing prompt template: " + err.Error())
 	}
-
 	return buf.String()
 }
 
-// System is a representation of the system
+// System represents system instructions for the LLM.
 type System struct {
 	Language string
-	Logger   *zap.Logger
 }
 
 func (s System) Generate() string {
 	const tmplStr = "You are an expert AI programming assistant for {{.Language}}. You write simple, concise code. Your task is to Fill-in-the-middle (FIM) or infill. Only output the code completion without any preamble, explanation, or markdown formatting."
 	tmpl, err := template.New("system").Parse(tmplStr)
-
 	if err != nil {
-		s.Logger.Error("Error compiling the system template", zap.Error(err))
-		return ""
+		panic("Error parsing system template: " + err.Error())
 	}
 
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, s)
-	if err != nil {
-		s.Logger.Error("Error parsing the system template", zap.Error(err))
-		return ""
+	if err := tmpl.Execute(&buf, s); err != nil {
+		panic("Error executing system template: " + err.Error())
 	}
 
 	return buf.String()
 }
 
-// CompletionHandler is an http.Handler that returns completions.
+// CompletionHandler streams completions from Ollama.
 type CompletionHandler struct {
 	api        *api.Client
 	model      string
-	templ      *template.Template
+	template   *template.Template
 	numPredict int
 	logger     *zap.Logger
 }
 
-// NewCompletionHandler returns a new CompletionHandler.
-func NewCompletionHandler(api *api.Client, model string, promptTemplate *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
-	return &CompletionHandler{api, model, promptTemplate, numPredict, logger}
+// NewCompletionHandler constructs a new CompletionHandler.
+func NewCompletionHandler(api *api.Client, model string, tmpl *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
+	return &CompletionHandler{
+		api:        api,
+		model:      model,
+		template:   tmpl,
+		numPredict: numPredict,
+		logger:     logger,
+	}
 }
 
-// ServeHTTP implements http.Handler.
-func (ch *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPost {
-		responseWriter.WriteHeader(http.StatusMethodNotAllowed)
+// ServeHTTP handles completion requests.
+func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	req := CompletionRequest{}
-	if err := json.NewDecoder(request.Body).Decode(&req); err != nil {
-		ch.logger.Error("Error decoding request", zap.Error(err))
-		responseWriter.WriteHeader(http.StatusBadRequest)
+	var req CompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ch.logger.Error("Failed to decode request", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	responseWriter.Header().Set("content-Type", "application/json")
-	responseWriter.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 
-	generate := api.GenerateRequest{
+	generateReq := api.GenerateRequest{
 		Model:  ch.model,
-		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix, Logger: ch.logger}.Generate(ch.templ),
-		System: System{Language: req.Extra.Language, Logger: ch.logger}.Generate(),
+		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(ch.template),
+		System: System{Language: req.Extra.Language}.Generate(),
 		Options: map[string]interface{}{
 			"temperature": req.Temperature,
 			"top_p":       req.TopP,
@@ -141,53 +138,44 @@ func (ch *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, reque
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(request.Context(), time.Second*60)
-	request = request.WithContext(ctx)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
 
-	doneChan := make(chan struct{})
-	err := ch.api.Generate(request.Context(), &generate, func(resp api.GenerateResponse) error {
+	done := make(chan struct{})
+	err := ch.api.Generate(ctx, &generateReq, func(resp api.GenerateResponse) error {
+		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp.Response))
+
 		response := CompletionResponse{
 			Id:      uuid.New().String(),
 			Created: time.Now().Unix(),
-			Choices: []ChoiceResponse{
-				{
-					Text:  resp.Response,
-					Index: 0,
-				},
-			},
+			Choices: []ChoiceResponse{{Text: resp.Response, Index: 0}},
 		}
-		ch.logger.Debug("Chunk generated", zap.Any("response", resp))
 
-		_, err := responseWriter.Write([]byte("data: "))
-		if err != nil {
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			cancel()
+			return err
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
 			cancel()
 			return err
 		}
 
-		err = json.NewEncoder(responseWriter).Encode(response)
-		if err != nil {
-			cancel()
-			return err
-		}
 		if resp.Done {
-			close(doneChan)
+			close(done)
 		}
-
 		return nil
 	})
 
 	if err == nil {
 		select {
-		case <-request.Context().Done():
-			err = request.Context().Err()
-		case <-doneChan:
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-done:
 		}
 	}
 
 	if err != nil {
-		responseWriter.WriteHeader(http.StatusInternalServerError)
-		ch.logger.Error("Generation failed", zap.Error(err))
-		return
+		w.WriteHeader(http.StatusInternalServerError)
+		ch.logger.Error("Completion generation failed", zap.Error(err))
 	}
 }
