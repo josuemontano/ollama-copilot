@@ -34,8 +34,9 @@ var hosts = []string{
 	"api.githubcopilot.com",
 	"api.github.com",
 	"copilot-proxy.githubusercontent.com",
-	"proxy.individual.githubcopilot.com",
 	"copilot-telemetry.githubusercontent.com",
+	"proxy.business.githubcopilot.com",
+	"proxy.individual.githubcopilot.com",
 }
 
 func handle(conn net.Conn, forward string) {
