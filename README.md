@@ -2,7 +2,7 @@
 
 A proxy that allows you to use Ollama as a coding assistant similar to GitHub Copilot.
 
-![Video presentation](presentation.gif)
+![Zed demo](zed-demo.gif)
 
 ## Table of Contents
 
