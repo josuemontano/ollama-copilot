@@ -121,7 +121,8 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.ResponseWriter, req CompletionRequest) error {
 	startTime := time.Now()
 
-	prompt, err := Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(ch.promptTmpl)
+	prefix, suffix := getLinesAroundCursor(req.Prompt, req.Suffix, 60, 60)
+	prompt, err := Prompt{Prefix: prefix, Suffix: suffix}.Generate(ch.promptTmpl)
 	if err != nil {
 		return err
 	}
@@ -233,4 +234,24 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 	}
 
 	return nil
+}
+
+// getLinesAroundCursor returns up to `before` lines from the end of prefix
+// and up to `after` lines from the start of suffix.
+func getLinesAroundCursor(prefixText, suffixText string, before, after int) (string, string) {
+	prefixLines := strings.Split(prefixText, "\n")
+	n := len(prefixLines)
+	start := 0
+	if n > before {
+		start = n - before
+	}
+	prefix := strings.Join(prefixLines[start:], "\n")
+
+	suffixLines := strings.Split(suffixText, "\n")
+	if len(suffixLines) > after {
+		suffixLines = suffixLines[:after]
+	}
+	suffix := strings.Join(suffixLines, "\n")
+
+	return prefix, suffix
 }
