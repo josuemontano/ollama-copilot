@@ -10,16 +10,16 @@ import (
 var logger *zap.Logger
 
 var (
-	port         = flag.String("port", ":11437", "Port to listen on")
-	proxyPort    = flag.String("proxy-port", ":11438", "Proxy port to listen on")
-	portSSL      = flag.String("port-ssl", ":11436", "Port to listen on")
-	proxyPortSSL = flag.String("proxy-port-ssl", ":11435", "Proxy port to listen on")
-	cert         = flag.String("cert", "", "Certificate file path *.crt")
-	key          = flag.String("key", "", "Key file path *.key")
-	model        = flag.String("model", "codellama:code", "LLM model to use")
-	numPredict   = flag.Int("num-predict", 150, "Number of tokens the model should generate")
-	templateStr  = flag.String("template", "<PRE> {{.Prefix}} <SUF> {{.Suffix}} <MID>", "Fill-in-middle template to apply in prompt")
-	verbose      = flag.Bool("verbose", false, "Enable verbose mode")
+	port              = flag.String("port", ":11437", "Port to listen on")
+	proxyPort         = flag.String("proxy-port", ":11438", "Proxy port to listen on")
+	portSSL           = flag.String("port-ssl", ":11436", "Port to listen on")
+	proxyPortSSL      = flag.String("proxy-port-ssl", ":11435", "Proxy port to listen on")
+	cert              = flag.String("cert", "", "Certificate file path *.crt")
+	key               = flag.String("key", "", "Key file path *.key")
+	model             = flag.String("model", "codellama:code", "LLM model to use")
+	numPredict        = flag.Int("num-predict", 150, "Number of tokens the model should generate")
+	promptTemplateStr = flag.String("prompt-template", "<PRE> {{.Prefix}} <SUF> {{.Suffix}} <MID>", "Fill-in-middle template to apply in prompt")
+	verbose           = flag.Bool("verbose", false, "Enable verbose mode")
 )
 
 // main is the entrypoint for the program.
@@ -38,7 +38,7 @@ func main() {
 		Port:        *port,
 		Certificate: *cert,
 		Key:         *key,
-		Template:    *templateStr,
+		Template:    *promptTemplateStr,
 		Model:       *model,
 		NumPredict:  *numPredict,
 		Logger:      logger,
