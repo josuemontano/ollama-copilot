@@ -14,7 +14,10 @@ import (
 
 	"github.com/josuemontano/ollama-copilot/internal/handlers"
 	"github.com/josuemontano/ollama-copilot/internal/middleware"
+	"go.uber.org/zap"
 )
+
+var logger *zap.Logger
 
 // Server is the main server struct.
 type Server struct {
@@ -89,7 +92,6 @@ func selfAssignCertificate() (tls.Certificate, error) {
 
 // mux returns the main mux for the server.
 func (s *Server) mux() http.Handler {
-
 	templ, err := template.New("prompt").Parse(s.Template)
 	if err != nil {
 		log.Fatalf("error parsing template: %s", err.Error())

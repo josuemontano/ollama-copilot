@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"text/template"
 	"time"
@@ -12,7 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
+	"go.uber.org/zap"
 )
+
+var logger *zap.Logger
 
 // CompletionRequest is the request sent to the completion handler
 type CompletionRequest struct {
@@ -62,12 +64,14 @@ type Prompt struct {
 	Suffix string
 }
 
-func (p Prompt) Generate(templ *template.Template) string {
+func (p Prompt) Generate(tmpl *template.Template) string {
 	var buf = new(bytes.Buffer)
-	err := templ.Execute(buf, p)
+	err := tmpl.Execute(buf, p)
+
 	if err != nil {
-		log.Printf("error executing prompt template: %s", err.Error())
+		logger.Fatal("Error parsing the prompt template", zap.Error(err))
 	}
+
 	return buf.String()
 }
 
@@ -77,18 +81,21 @@ type System struct {
 }
 
 func (s System) Generate() string {
-	const tmpl = "You are an expert AI programming assistant for {{.Language}}. You write simple, concise code. Your task is to Fill-in-the-middle (FIM) or infill. Only output the code completion without any preamble, explanation, or markdown formatting."
-	t, err := template.New("system").Parse(tmpl)
+	const tmplStr = "You are an expert AI programming assistant for {{.Language}}. You write simple, concise code. Your task is to Fill-in-the-middle (FIM) or infill. Only output the code completion without any preamble, explanation, or markdown formatting."
+	tmpl, err := template.New("system").Parse(tmplStr)
+
 	if err != nil {
-		log.Printf("error parsing template: %s", err.Error())
+		logger.Error("Error compiling the system template", zap.Error(err))
 		return ""
 	}
 
 	var buf bytes.Buffer
-	err = t.Execute(&buf, s)
+	err = tmpl.Execute(&buf, s)
 	if err != nil {
-		log.Printf("error executing system template: %s", err.Error())
+		logger.Error("Error parsing the system template", zap.Error(err))
+		return ""
 	}
+
 	return buf.String()
 }
 
@@ -113,7 +120,7 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req := CompletionRequest{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Fatalf("error decode: %s", err.Error())
+		logger.Fatal("Error decoding request", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -131,7 +138,8 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Initialize Ollama via LangChainGo
 	llm, err := ollama.New(ollama.WithModel(c.model))
 	if err != nil {
-		http.Error(w, "failed to initialize ollama", http.StatusInternalServerError)
+		logger.Fatal("Failed to intialize the Ollama client", zap.Error(err))
+		http.Error(w, "Failed to intialize the Ollama client", http.StatusInternalServerError)
 		return
 	}
 
@@ -158,7 +166,7 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				},
 			}
 
-			log.Printf("Ollama response chunk: %s", chunk)
+			logger.Debug("Chunk generated", zap.ByteString("chunk", chunk), zap.Any("response", resp))
 
 			_, err := w.Write([]byte("data: "))
 			if err != nil {
@@ -184,7 +192,7 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Printf("error generating completion: %v", err)
+		logger.Error("Generation failed", zap.Error(err))
 		return
 	}
 }
