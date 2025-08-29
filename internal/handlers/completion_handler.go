@@ -153,17 +153,10 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 
 	// Always return nil error so the stream ends gracefully
 	_ = ch.api.Generate(ctx, &genReq, func(resp api.GenerateResponse) error {
-		// Skip chunks that are exactly "```" or "python"
-		trimmed := strings.TrimSpace(resp.Response)
-		if trimmed == "```" || trimmed == "python" {
+		chunk, skip := cleanChunk(resp.Response, prevSkipped, req.Extra.Language)
+		if skip {
 			prevSkipped = true
 			return nil
-		}
-
-		chunk := resp.Response
-		// If previous was skipped and current starts with newline, remove leading newline
-		if prevSkipped && strings.HasPrefix(chunk, "\n") {
-			chunk = strings.TrimPrefix(chunk, "\n")
 		}
 		prevSkipped = false
 
@@ -267,4 +260,23 @@ func ensureImEndStop(stop []string) []string {
 		}
 	}
 	return append(stop, "<|im_end|>")
+}
+
+// cleanChunk processes a code chunk to remove unwanted markers and adjust newlines.
+// Returns the cleaned chunk and a bool indicating if it should be skipped.
+func cleanChunk(chunk string, prevSkipped bool, language string) (string, bool) {
+	trimmed := strings.TrimSpace(chunk)
+	if trimmed == "```" || trimmed == language {
+		return "", true // skip this chunk
+	}
+
+	// Remove any "\n```" sequences inside the chunk
+	chunk = strings.ReplaceAll(chunk, "\n```", "")
+
+	// Remove leading newline if previous chunk was skipped
+	if prevSkipped && strings.HasPrefix(chunk, "\n") {
+		chunk = strings.TrimPrefix(chunk, "\n")
+	}
+
+	return chunk, false
 }
