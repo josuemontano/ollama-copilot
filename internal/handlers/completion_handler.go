@@ -126,23 +126,40 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	generateReq := api.GenerateRequest{
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+
+	if err := ch.generateCompletion(ctx, w, req.Prompt, req.Suffix, req.Extra.Language, req.Temperature, req.TopP, req.Stop); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		ch.logger.Error("Completion generation failed", zap.Error(err))
+	}
+}
+
+// generateCompletion streams a code completion from Ollama.
+func (ch *CompletionHandler) generateCompletion(
+	ctx context.Context,
+	w http.ResponseWriter,
+	promptText string,
+	suffix string,
+	language string,
+	temp float64,
+	topP int,
+	stop []string,
+) error {
+	req := api.GenerateRequest{
 		Model:  ch.model,
-		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(ch.template),
-		System: System{Language: req.Extra.Language}.Generate(),
+		Prompt: Prompt{Prefix: promptText, Suffix: suffix}.Generate(ch.template),
+		System: System{Language: language}.Generate(),
 		Options: map[string]interface{}{
-			"temperature": req.Temperature,
-			"top_p":       req.TopP,
-			"stop":        req.Stop,
+			"temperature": temp,
+			"top_p":       topP,
+			"stop":        stop,
 			"num_predict": ch.numPredict,
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
-
 	done := make(chan struct{})
-	err := ch.api.Generate(ctx, &generateReq, func(resp api.GenerateResponse) error {
+	err := ch.api.Generate(ctx, &req, func(resp api.GenerateResponse) error {
 		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp.Response))
 
 		response := CompletionResponse{
@@ -152,17 +169,17 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if _, err := w.Write([]byte("data: ")); err != nil {
-			cancel()
 			return err
 		}
+
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			cancel()
 			return err
 		}
 
 		if resp.Done {
 			close(done)
 		}
+
 		return nil
 	})
 
@@ -174,8 +191,5 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		ch.logger.Error("Completion generation failed", zap.Error(err))
-	}
+	return err
 }
