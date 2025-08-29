@@ -76,8 +76,9 @@ type CompletionHandler struct {
 // NewCompletionHandler constructs a new CompletionHandler.
 func NewCompletionHandler(api *api.Client, model string, promptTmpl *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
 	systemTmpl := template.Must(template.New("system").Parse(
-		`You are an expert AI programming assistant for {{.Language}}. 
-Your goal is to perform Fill-in-the-Middle (FIM) code completion. Complete only the code that fits between the given prefix and suffix. 
+		`You are an expert programming assistant for {{.Language}}. 
+Your task is to perform Fill-in-the-Middle (FIM) code completion. Complete only the code that fits between the given prefix and suffix. 
+You may generate code, comments, type annotations, and meta comments in the middle section. 
 Do not add explanations, comments, or markdown. Do not change code outside the specified boundaries.`))
 
 	return &CompletionHandler{
