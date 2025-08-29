@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"text/template"
 	"time"
@@ -32,20 +33,11 @@ type CompletionRequest struct {
 	TopP        int      `json:"top_p"`
 }
 
-// Logprobs represents token log probabilities.
-type Logprobs struct {
-	Tokens []struct {
-		Token   string  `json:"token"`
-		Logprob float64 `json:"logprob"`
-	} `json:"tokens"`
-}
-
 // ChoiceResponse is a single completion choice.
 type ChoiceResponse struct {
 	Text         string `json:"text"`
 	Index        int    `json:"index"`
-	Logprobs     *Logprobs
-	FinishReason string `json:"finish_reason"`
+	FinishReason string `json:"finish_reason,omitempty"`
 }
 
 // CompletionResponse is the full response returned to the client.
@@ -61,49 +53,37 @@ type Prompt struct {
 	Suffix string
 }
 
-func (p Prompt) Generate(tmpl *template.Template) string {
+// Generate executes the prompt template.
+func (p Prompt) Generate(tmpl *template.Template) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, p); err != nil {
-		panic("Error executing prompt template: " + err.Error())
+		return "", fmt.Errorf("executing prompt template: %w", err)
 	}
-	return buf.String()
-}
-
-// System represents system instructions for the LLM.
-type System struct {
-	Language string
-}
-
-func (s System) Generate() string {
-	const tmplStr = "You are an expert AI programming assistant for {{.Language}}. You write simple, concise code. Your task is to Fill-in-the-middle (FIM) or infill. Only output the code completion without any preamble, explanation, or markdown formatting."
-	tmpl, err := template.New("system").Parse(tmplStr)
-	if err != nil {
-		panic("Error parsing system template: " + err.Error())
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, s); err != nil {
-		panic("Error executing system template: " + err.Error())
-	}
-
-	return buf.String()
+	return buf.String(), nil
 }
 
 // CompletionHandler streams completions from Ollama.
 type CompletionHandler struct {
 	api        *api.Client
 	model      string
-	template   *template.Template
+	promptTmpl *template.Template
+	systemTmpl *template.Template
 	numPredict int
 	logger     *zap.Logger
 }
 
 // NewCompletionHandler constructs a new CompletionHandler.
-func NewCompletionHandler(api *api.Client, model string, tmpl *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
+func NewCompletionHandler(api *api.Client, model string, promptTmpl *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
+	systemTmpl := template.Must(template.New("system").Parse(
+		`You are an expert AI programming assistant for {{.Language}}.
+Your task is to Fill-in-the-middle (FIM) or infill. 
+Only output the code completion without any preamble, explanation, or markdown fences.`))
+
 	return &CompletionHandler{
 		api:        api,
 		model:      model,
-		template:   tmpl,
+		promptTmpl: promptTmpl,
+		systemTmpl: systemTmpl,
 		numPredict: numPredict,
 		logger:     logger,
 	}
@@ -123,44 +103,45 @@ func (ch *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
 
-	if err := ch.generateCompletion(ctx, w, req.Prompt, req.Suffix, req.Extra.Language, req.Temperature, req.TopP, req.Stop); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+	if err := ch.generateCompletion(ctx, w, req); err != nil {
 		ch.logger.Error("Completion generation failed", zap.Error(err))
 	}
 }
 
 // generateCompletion streams a code completion from Ollama.
-func (ch *CompletionHandler) generateCompletion(
-	ctx context.Context,
-	w http.ResponseWriter,
-	promptText string,
-	suffix string,
-	language string,
-	temp float64,
-	topP int,
-	stop []string,
-) error {
-	req := api.GenerateRequest{
+func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.ResponseWriter, req CompletionRequest) error {
+	prompt, err := Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(ch.promptTmpl)
+	if err != nil {
+		return err
+	}
+
+	systemBuf := bytes.Buffer{}
+	if err := ch.systemTmpl.Execute(&systemBuf, struct{ Language string }{Language: req.Extra.Language}); err != nil {
+		return fmt.Errorf("executing system template: %w", err)
+	}
+
+	genReq := api.GenerateRequest{
 		Model:  ch.model,
-		Prompt: Prompt{Prefix: promptText, Suffix: suffix}.Generate(ch.template),
-		System: System{Language: language}.Generate(),
+		Prompt: prompt,
+		System: systemBuf.String(),
 		Options: map[string]interface{}{
-			"temperature": temp,
-			"top_p":       topP,
-			"stop":        stop,
+			"temperature": req.Temperature,
+			"top_p":       req.TopP,
+			"stop":        req.Stop,
 			"num_predict": ch.numPredict,
 		},
 	}
 
 	done := make(chan struct{})
-	err := ch.api.Generate(ctx, &req, func(resp api.GenerateResponse) error {
-		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp.Response))
+	err = ch.api.Generate(ctx, &genReq, func(resp api.GenerateResponse) error {
+		ch.logger.Debug("Chunk generated", zap.String("chunk", resp.Response))
 
 		response := CompletionResponse{
 			Id:      uuid.New().String(),
@@ -168,18 +149,20 @@ func (ch *CompletionHandler) generateCompletion(
 			Choices: []ChoiceResponse{{Text: resp.Response, Index: 0}},
 		}
 
-		if _, err := w.Write([]byte("data: ")); err != nil {
+		// SSE formatting
+		if _, err := fmt.Fprintf(w, "data: "); err != nil {
 			return err
 		}
-
 		if err := json.NewEncoder(w).Encode(response); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "\n\n"); err != nil {
 			return err
 		}
 
 		if resp.Done {
 			close(done)
 		}
-
 		return nil
 	})
 
