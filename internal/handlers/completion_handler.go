@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"text/template"
 	"time"
 
@@ -150,17 +151,31 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 	done := make(chan struct{})
 	var genErr error
 	var totalChunks []string
+	var prevSkipped bool
 
 	// Always return nil error so the stream ends gracefully
 	_ = ch.api.Generate(ctx, &genReq, func(resp api.GenerateResponse) error {
-		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp))
+		// Skip chunks that are exactly "```" or "python"
+		trimmed := strings.TrimSpace(resp.Response)
+		if trimmed == "```" || trimmed == "python" {
+			prevSkipped = true
+			return nil
+		}
 
-		totalChunks = append(totalChunks, resp.Response)
+		chunk := resp.Response
+		// If previous was skipped and current starts with newline, remove leading newline
+		if prevSkipped && strings.HasPrefix(chunk, "\n") {
+			chunk = strings.TrimPrefix(chunk, "\n")
+		}
+		prevSkipped = false
+
+		ch.logger.Debug("Chunk generated", zap.Any("chunk", resp))
+		totalChunks = append(totalChunks, chunk)
 
 		response := CompletionResponse{
 			Id:      uuid.New().String(),
 			Created: time.Now().Unix(),
-			Choices: []ChoiceResponse{{Text: resp.Response, Index: 0}},
+			Choices: []ChoiceResponse{{Text: chunk, Index: 0}},
 		}
 
 		if _, err := fmt.Fprintf(w, "data: "); err != nil {
@@ -179,7 +194,8 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 		if resp.Done {
 			close(done)
 		}
-		return nil // ignore generator errors; keep stream
+
+		return nil
 	})
 
 	// Wait for either context timeout or done signal
