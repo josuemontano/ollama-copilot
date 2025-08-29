@@ -32,7 +32,7 @@ A proxy that allows you to use Ollama as a coding assistant similar to GitHub Co
 
 ## Requirements
 
-- Go 2.20 or higher
+- Go 1.20 or higher
 - Ollama installed and running
 - At least 16GB RAM (depending on the LLM model used)
 
@@ -44,8 +44,8 @@ A proxy that allows you to use Ollama as a coding assistant similar to GitHub Co
 
 ```bash
 # For Linux (adjust version as needed)
-wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
 
 # For macOS (using Homebrew)
 brew install go
