@@ -17,7 +17,7 @@ var (
 	cert              = flag.String("cert", "", "Certificate file path *.crt")
 	key               = flag.String("key", "", "Key file path *.key")
 	model             = flag.String("model", "qwen3-coder:30b", "LLM model to use")
-	numPredict        = flag.Int("num-predict", 500, "Number of tokens the model should generate")
+	numPredict        = flag.Int("num-predict", 200, "Maximum number of tokens to predict")
 	promptTemplateStr = flag.String("prompt-template", "<|fim_prefix|> {{.Prefix}} <|fim_suffix|>{{.Suffix}} <|fim_middle|>", "Fill-in-middle template to apply in prompt")
 	verbose           = flag.Bool("verbose", false, "Enable verbose mode")
 )
