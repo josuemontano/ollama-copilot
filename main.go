@@ -14,7 +14,7 @@ var (
 	cert         = flag.String("cert", "", "Certificate file path *.crt")
 	key          = flag.String("key", "", "Key file path *.key")
 	model        = flag.String("model", "codellama:code", "LLM model to use")
-	numPredict   = flag.Int("num-predict", 50, "Number of tokens the model should generate")
+	numPredict   = flag.Int("num-predict", 150, "Number of tokens the model should generate")
 	templateStr  = flag.String("template", "<PRE> {{.Prefix}} <SUF> {{.Suffix}} <MID>", "Fill-in-middle template to apply in prompt")
 )
 
