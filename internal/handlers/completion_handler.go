@@ -143,6 +143,10 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		systemPrompt+"\n\n"+taskPrompt,
 		llms.WithTemperature(req.Temperature),
 		llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
+			if chunk == nil {
+				return nil
+			}
+
 			resp := CompletionResponse{
 				Id:      uuid.New().String(),
 				Created: time.Now().Unix(),
