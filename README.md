@@ -113,18 +113,18 @@ ollama-copilot
 
 ### Command Line Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-port` | `:11437` | HTTP port to listen on |
-| `-proxy-port` | `:11438` | HTTP proxy port to listen on |
-| `-port-ssl` | `:11436` | HTTPS port to listen on |
-| `-proxy-port-ssl` | `:11435` | HTTPS proxy port to listen on |
-| `-cert` | `""` | Certificate file path (*.crt) for HTTPS |
-| `-key` | `""` | Key file path (*.key) for HTTPS |
-| `-model` | `qwen3-coder:30b` | LLM model to use with Ollama |
-| `-num-predict` | `200` | Maximum number of tokens to predict |
-| `-prompt-template` | `<|fim_prefix|> {{.Prefix}} <|fim_suffix|>{{.Suffix}} <|fim_middle|>` | Fill-in-middle template for prompts |
-| `-verbose` | `false` | Enable verbose logging mode |
+| Flag               | Default                                                                     | Description                              |
+| ------------------ | --------------------------------------------------------------------------- | ---------------------------------------- |
+| `--port`            | `:11437`                                                                    | HTTP port to listen on                   |
+| `--proxy-port`      | `:11438`                                                                    | HTTP proxy port to listen on             |
+| `--port-ssl`        | `:11436`                                                                    | HTTPS port to listen on                  |
+| `--proxy-port-ssl`  | `:11435`                                                                    | HTTPS proxy port to listen on            |
+| `--cert`            | `""`                                                                        | Certificate file path (\*.crt) for HTTPS |
+| `--key`             | `""`                                                                        | Key file path (\*.key) for HTTPS         |
+| `--model`           | `qwen3-coder:30b`                                                           | LLM model to use with Ollama             |
+| `--num-predict`     | `200`                                                                       | Maximum number of tokens to predict      |
+| `--prompt-template` | `<\|fim_prefix\|> {{.Prefix}} <\|fim_suffix\|>{{.Suffix}} <\|fim_middle\|>` | Fill-in-middle template for prompts      |
+| `--verbose`         | `false`                                                                     | Enable verbose logging mode              |
 
 Example with custom options:
 
