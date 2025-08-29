@@ -9,8 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/ollama"
+	"github.com/ollama/ollama/api"
 	"go.uber.org/zap"
 )
 
@@ -101,97 +100,92 @@ func (s System) Generate() string {
 
 // CompletionHandler is an http.Handler that returns completions.
 type CompletionHandler struct {
+	api        *api.Client
 	model      string
 	templ      *template.Template
 	numPredict int
 }
 
 // NewCompletionHandler returns a new CompletionHandler.
-func NewCompletionHandler(model string, template *template.Template, numPredict int) *CompletionHandler {
-	return &CompletionHandler{model, template, numPredict}
+func NewCompletionHandler(api *api.Client, model string, promptTemplate *template.Template, numPredict int) *CompletionHandler {
+	return &CompletionHandler{api, model, promptTemplate, numPredict}
 }
 
 // ServeHTTP implements http.Handler.
-func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		responseWriter.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
 	req := CompletionRequest{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(request.Body).Decode(&req); err != nil {
 		logger.Fatal("Error decoding request", zap.Error(err))
-		w.WriteHeader(http.StatusBadRequest)
+		responseWriter.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	responseWriter.Header().Set("content-Type", "application/json")
+	responseWriter.WriteHeader(http.StatusOK)
 
-	// Prepare system + prompt
-	systemPrompt := System{Language: req.Extra.Language}.Generate()
-	taskPrompt := Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(c.templ)
+	generate := api.GenerateRequest{
+		Model:  handler.model,
+		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(handler.templ),
+		System: System{Language: req.Extra.Language}.Generate(),
+		Options: map[string]interface{}{
+			"temperature": req.Temperature,
+			"top_p":       req.TopP,
+			"stop":        req.Stop,
+			"num_predict": handler.numPredict,
+		},
+	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), time.Second*60)
+	ctx, cancel := context.WithTimeout(request.Context(), time.Second*60)
+	request = request.WithContext(ctx)
 	defer cancel()
 
-	// Initialize Ollama via LangChainGo
-	llm, err := ollama.New(ollama.WithModel(c.model))
-	if err != nil {
-		logger.Fatal("Failed to intialize the Ollama client", zap.Error(err))
-		http.Error(w, "Failed to intialize the Ollama client", http.StatusInternalServerError)
-		return
-	}
-
 	doneChan := make(chan struct{})
-
-	_, err = llms.GenerateFromSinglePrompt(
-		ctx,
-		llm,
-		systemPrompt+"\n\n"+taskPrompt,
-		llms.WithTemperature(req.Temperature),
-		llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
-			if chunk == nil {
-				return nil
-			}
-
-			resp := CompletionResponse{
-				Id:      uuid.New().String(),
-				Created: time.Now().Unix(),
-				Choices: []ChoiceResponse{
-					{
-						Text:  string(chunk),
-						Index: 0,
-					},
+	err := handler.api.Generate(request.Context(), &generate, func(resp api.GenerateResponse) error {
+		response := CompletionResponse{
+			Id:      uuid.New().String(),
+			Created: time.Now().Unix(),
+			Choices: []ChoiceResponse{
+				{
+					Text:  resp.Response,
+					Index: 0,
 				},
-			}
+			},
+		}
+		logger.Debug("Chunk generated", zap.Any("response", response))
 
-			logger.Debug("Chunk generated", zap.ByteString("chunk", chunk), zap.Any("response", resp))
+		_, err := responseWriter.Write([]byte("data: "))
+		if err != nil {
+			cancel()
+			return err
+		}
 
-			_, err := w.Write([]byte("data: "))
-			if err != nil {
-				cancel()
-				return err
-			}
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				cancel()
-				return err
-			}
-			return nil
-		}),
-	)
-	close(doneChan)
+		err = json.NewEncoder(responseWriter).Encode(response)
+		if err != nil {
+			cancel()
+			return err
+		}
+		if resp.Done {
+			close(doneChan)
+		}
+
+		return nil
+	})
 
 	if err == nil {
 		select {
-		case <-ctx.Done():
-			err = ctx.Err()
+		case <-request.Context().Done():
+			err = request.Context().Err()
 		case <-doneChan:
 		}
 	}
 
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		responseWriter.WriteHeader(http.StatusInternalServerError)
 		logger.Error("Generation failed", zap.Error(err))
 		return
 	}
