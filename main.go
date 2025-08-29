@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 
-	"github.com/bernardo-bruning/ollama-copilot/internal"
+	"github.com/josuemontano/ollama-copilot/internal"
 )
 
 var (

@@ -27,7 +27,7 @@ ollama pull codellama:code
 ### ollama-copilot
 
 ```bash
-go install github.com/bernardo-bruning/ollama-copilot@latest
+go install github.com/josuemontano/ollama-copilot@latest
 ```
 
 ### Running
@@ -44,6 +44,7 @@ ollama-copilot
 ```
 
 or if you are hosting ollama in a container or elsewhere
+
 ```bash
 OLLAMA_HOST="http://192.168.133.7:11434" ollama-copilot
 ```
@@ -68,11 +69,11 @@ let g:copilot_proxy_strict_ssl = v:false
 
 ```json
 {
-    "github.copilot.advanced": {
-        "debug.overrideProxyUrl": "http://localhost:11437"
-    },
-    "http.proxy": "http://localhost:11435",
-    "http.proxyStrictSSL": false
+  "github.copilot.advanced": {
+    "debug.overrideProxyUrl": "http://localhost:11437"
+  },
+  "http.proxy": "http://localhost:11435",
+  "http.proxyStrictSSL": false
 }
 ```
 
@@ -83,16 +84,16 @@ let g:copilot_proxy_strict_ssl = v:false
 
 ```json
 {
-    "features": {
-        "edit_prediction_provider": "copilot"
-    },
-    "show_completions_on_input": true,
-    "edit_predictions": {
-        "copilot": {
-            "proxy": "http://localhost:11435",
-            "proxy_no_verify": true
-        }
+  "features": {
+    "edit_prediction_provider": "copilot"
+  },
+  "show_completions_on_input": true,
+  "edit_predictions": {
+    "copilot": {
+      "proxy": "http://localhost:11435",
+      "proxy_no_verify": true
     }
+  }
 }
 ```
 
@@ -115,7 +116,6 @@ let g:copilot_proxy_strict_ssl = v:false
   (setq copilot-network-proxy '(:host "127.0.0.1" :port 11434 :rejectUnauthorized :json-false))
   )
 ```
-
 
 ## Roadmap
 
