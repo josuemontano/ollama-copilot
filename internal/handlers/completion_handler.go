@@ -132,11 +132,8 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 		return fmt.Errorf("executing system template: %w", err)
 	}
 
-	numPredict := req.MaxTokens
-	if ch.numPredict < numPredict {
-		numPredict = ch.numPredict
-	}
-
+	numPredict := minInt(req.MaxTokens, ch.numPredict)
+	stopTokens := ensureImEndStop(req.Stop)
 	genReq := api.GenerateRequest{
 		Model:  ch.model,
 		Prompt: prompt,
@@ -144,7 +141,7 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 		Options: map[string]interface{}{
 			"temperature": req.Temperature,
 			"top_p":       req.TopP,
-			"stop":        req.Stop,
+			"stop":        stopTokens,
 			"num_predict": numPredict,
 		},
 	}
@@ -254,4 +251,20 @@ func getLinesAroundCursor(prefixText, suffixText string, before, after int) (str
 	suffix := strings.Join(suffixLines, "\n")
 
 	return prefix, suffix
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func ensureImEndStop(stop []string) []string {
+	for _, tok := range stop {
+		if tok == "<|im_end|>" {
+			return stop // already present
+		}
+	}
+	return append(stop, "<|im_end|>")
 }
