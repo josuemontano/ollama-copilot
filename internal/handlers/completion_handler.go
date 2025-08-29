@@ -127,6 +127,10 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 		return fmt.Errorf("executing system template: %w", err)
 	}
 
+	numPredict := req.MaxTokens
+	if ch.numPredict < numPredict {
+		numPredict = ch.numPredict
+	}
 	genReq := api.GenerateRequest{
 		Model:  ch.model,
 		Prompt: prompt,
@@ -135,7 +139,7 @@ func (ch *CompletionHandler) generateCompletion(ctx context.Context, w http.Resp
 			"temperature": req.Temperature,
 			"top_p":       req.TopP,
 			"stop":        req.Stop,
-			"num_predict": ch.numPredict,
+			"num_predict": numPredict,
 		},
 	}
 
