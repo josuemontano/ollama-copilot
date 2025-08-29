@@ -21,7 +21,7 @@ Or follow the [manual install](https://github.com/ollama/ollama/blob/main/docs/l
 To use the default model expected by `ollama-copilot`:
 
 ```bash
-ollama pull codellama:code
+ollama pull qwen3-coder:30b
 ```
 
 ### ollama-copilot
@@ -116,11 +116,3 @@ let g:copilot_proxy_strict_ssl = v:false
   (setq copilot-network-proxy '(:host "127.0.0.1" :port 11434 :rejectUnauthorized :json-false))
   )
 ```
-
-## Roadmap
-
-- [x] Enable completions APIs usage; fill in the middle.
-- [x] Enable flexible configuration model (Currently only supported llamacode:code).
-- [x] Create self-installing functionality.
-- [ ] Windows setup
-- [ ] Documentation on how to use.
