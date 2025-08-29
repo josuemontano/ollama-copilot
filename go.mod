@@ -1,4 +1,4 @@
-module github.com/josuemontano/ollama-copilot
+module github.com/josuemontano/ollama-copilot/v2
 
 go 1.25.0
 
