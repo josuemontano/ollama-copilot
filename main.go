@@ -4,7 +4,10 @@ import (
 	"flag"
 
 	"github.com/josuemontano/ollama-copilot/internal"
+	"go.uber.org/zap"
 )
+
+var logger *zap.Logger
 
 var (
 	port         = flag.String("port", ":11437", "Port to listen on")
@@ -16,11 +19,20 @@ var (
 	model        = flag.String("model", "codellama:code", "LLM model to use")
 	numPredict   = flag.Int("num-predict", 150, "Number of tokens the model should generate")
 	templateStr  = flag.String("template", "<PRE> {{.Prefix}} <SUF> {{.Suffix}} <MID>", "Fill-in-middle template to apply in prompt")
+	verbose      = flag.Bool("verbose", false, "Enable verbose mode")
 )
 
 // main is the entrypoint for the program.
 func main() {
 	flag.Parse()
+
+	if *verbose {
+		logger, _ = zap.NewDevelopment()
+	} else {
+		logger, _ = zap.NewProduction()
+	}
+	defer logger.Sync()
+
 	server := &internal.Server{
 		PortSSL:     *portSSL,
 		Port:        *port,
@@ -29,6 +41,7 @@ func main() {
 		Template:    *templateStr,
 		Model:       *model,
 		NumPredict:  *numPredict,
+		Logger:      logger,
 	}
 
 	go internal.Proxy(*proxyPortSSL, *portSSL)

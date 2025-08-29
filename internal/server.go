@@ -17,8 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var logger *zap.Logger
-
 // Server is the main server struct.
 type Server struct {
 	PortSSL     string
@@ -28,13 +26,14 @@ type Server struct {
 	Template    string
 	Model       string
 	NumPredict  int
+	Logger      *zap.Logger
 }
 
 // Serve starts the server.
-func (server *Server) Serve() {
-	err := http.ListenAndServe(server.Port, server.mux())
+func (s *Server) Serve() {
+	err := http.ListenAndServe(s.Port, s.mux())
 	if err != nil {
-		logger.Fatal("Error starting the HTTP server", zap.Error(err))
+		s.Logger.Fatal("Error starting the HTTP server", zap.Error(err))
 	}
 }
 
@@ -49,7 +48,7 @@ func (s *Server) ServeTLS() {
 	if s.Certificate == "" || s.Key == "" {
 		selfAssignCertificate, err := selfAssignCertificate()
 		if err != nil {
-			logger.Fatal("Error self assigning certificate", zap.Error(err))
+			s.Logger.Fatal("Error self assigning certificate", zap.Error(err))
 		}
 
 		server.TLSConfig.Certificates = append(server.TLSConfig.Certificates, selfAssignCertificate)
@@ -57,7 +56,7 @@ func (s *Server) ServeTLS() {
 
 	err := server.ListenAndServeTLS(s.Certificate, s.Key)
 	if err != nil {
-		logger.Fatal("Error starting the HTTPS server", zap.Error(err))
+		s.Logger.Fatal("Error starting the HTTPS server", zap.Error(err))
 	}
 }
 
@@ -91,17 +90,17 @@ func selfAssignCertificate() (tls.Certificate, error) {
 }
 
 // mux returns the main mux for the server.
-func (server *Server) mux() http.Handler {
+func (s *Server) mux() http.Handler {
 	api, err := api.ClientFromEnvironment()
 
 	if err != nil {
-		logger.Fatal("Error initializing the Ollama client", zap.Error(err))
+		s.Logger.Fatal("Error initializing the Ollama client", zap.Error(err))
 		return nil
 	}
 
-	promptTemplate, err := template.New("prompt").Parse(server.Template)
+	promptTemplate, err := template.New("prompt").Parse(s.Template)
 	if err != nil {
-		logger.Fatal("Error parsing the prompt template", zap.Error(err))
+		s.Logger.Fatal("Error parsing the prompt template", zap.Error(err))
 		return nil
 	}
 
@@ -109,9 +108,9 @@ func (server *Server) mux() http.Handler {
 
 	mux.Handle("/health", handlers.NewHealthHandler())
 	mux.Handle("/copilot_internal/v2/token", handlers.NewTokenHandler())
-	mux.Handle("/v1/engines/copilot-codex/completions", handlers.NewCompletionHandler(api, server.Model, promptTemplate, server.NumPredict))
-	mux.Handle("/v1/engines/chat-control/completions", handlers.NewCompletionHandler(api, server.Model, promptTemplate, server.NumPredict))
-	mux.Handle("/v1/engines/gpt-4o-copilot/completions", handlers.NewCompletionHandler(api, server.Model, promptTemplate, server.NumPredict))
+	mux.Handle("/v1/engines/copilot-codex/completions", handlers.NewCompletionHandler(api, s.Model, promptTemplate, s.NumPredict, s.Logger))
+	mux.Handle("/v1/engines/chat-control/completions", handlers.NewCompletionHandler(api, s.Model, promptTemplate, s.NumPredict, s.Logger))
+	mux.Handle("/v1/engines/gpt-4o-copilot/completions", handlers.NewCompletionHandler(api, s.Model, promptTemplate, s.NumPredict, s.Logger))
 
 	return middleware.LogMiddleware(middleware.GithubHeaderMiddleware(mux))
 }

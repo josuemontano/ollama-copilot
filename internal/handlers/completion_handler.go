@@ -13,8 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var logger *zap.Logger
-
 // CompletionRequest is the request sent to the completion handler
 type CompletionRequest struct {
 	Extra struct {
@@ -61,6 +59,7 @@ type CompletionResponse struct {
 type Prompt struct {
 	Prefix string
 	Suffix string
+	Logger *zap.Logger
 }
 
 func (p Prompt) Generate(tmpl *template.Template) string {
@@ -68,7 +67,7 @@ func (p Prompt) Generate(tmpl *template.Template) string {
 	err := tmpl.Execute(buf, p)
 
 	if err != nil {
-		logger.Fatal("Error parsing the prompt template", zap.Error(err))
+		p.Logger.Fatal("Error parsing the prompt template", zap.Error(err))
 	}
 
 	return buf.String()
@@ -77,6 +76,7 @@ func (p Prompt) Generate(tmpl *template.Template) string {
 // System is a representation of the system
 type System struct {
 	Language string
+	Logger   *zap.Logger
 }
 
 func (s System) Generate() string {
@@ -84,14 +84,14 @@ func (s System) Generate() string {
 	tmpl, err := template.New("system").Parse(tmplStr)
 
 	if err != nil {
-		logger.Error("Error compiling the system template", zap.Error(err))
+		s.Logger.Error("Error compiling the system template", zap.Error(err))
 		return ""
 	}
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, s)
 	if err != nil {
-		logger.Error("Error parsing the system template", zap.Error(err))
+		s.Logger.Error("Error parsing the system template", zap.Error(err))
 		return ""
 	}
 
@@ -104,15 +104,16 @@ type CompletionHandler struct {
 	model      string
 	templ      *template.Template
 	numPredict int
+	logger     *zap.Logger
 }
 
 // NewCompletionHandler returns a new CompletionHandler.
-func NewCompletionHandler(api *api.Client, model string, promptTemplate *template.Template, numPredict int) *CompletionHandler {
-	return &CompletionHandler{api, model, promptTemplate, numPredict}
+func NewCompletionHandler(api *api.Client, model string, promptTemplate *template.Template, numPredict int, logger *zap.Logger) *CompletionHandler {
+	return &CompletionHandler{api, model, promptTemplate, numPredict, logger}
 }
 
 // ServeHTTP implements http.Handler.
-func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (ch *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		responseWriter.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -120,7 +121,7 @@ func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, 
 
 	req := CompletionRequest{}
 	if err := json.NewDecoder(request.Body).Decode(&req); err != nil {
-		logger.Fatal("Error decoding request", zap.Error(err))
+		ch.logger.Error("Error decoding request", zap.Error(err))
 		responseWriter.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -129,14 +130,14 @@ func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, 
 	responseWriter.WriteHeader(http.StatusOK)
 
 	generate := api.GenerateRequest{
-		Model:  handler.model,
-		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(handler.templ),
-		System: System{Language: req.Extra.Language}.Generate(),
+		Model:  ch.model,
+		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix, Logger: ch.logger}.Generate(ch.templ),
+		System: System{Language: req.Extra.Language, Logger: ch.logger}.Generate(),
 		Options: map[string]interface{}{
 			"temperature": req.Temperature,
 			"top_p":       req.TopP,
 			"stop":        req.Stop,
-			"num_predict": handler.numPredict,
+			"num_predict": ch.numPredict,
 		},
 	}
 
@@ -145,7 +146,7 @@ func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, 
 	defer cancel()
 
 	doneChan := make(chan struct{})
-	err := handler.api.Generate(request.Context(), &generate, func(resp api.GenerateResponse) error {
+	err := ch.api.Generate(request.Context(), &generate, func(resp api.GenerateResponse) error {
 		response := CompletionResponse{
 			Id:      uuid.New().String(),
 			Created: time.Now().Unix(),
@@ -156,7 +157,7 @@ func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, 
 				},
 			},
 		}
-		logger.Debug("Chunk generated", zap.Any("response", response))
+		ch.logger.Debug("Chunk generated", zap.Any("response", resp))
 
 		_, err := responseWriter.Write([]byte("data: "))
 		if err != nil {
@@ -186,7 +187,7 @@ func (handler *CompletionHandler) ServeHTTP(responseWriter http.ResponseWriter, 
 
 	if err != nil {
 		responseWriter.WriteHeader(http.StatusInternalServerError)
-		logger.Error("Generation failed", zap.Error(err))
+		ch.logger.Error("Generation failed", zap.Error(err))
 		return
 	}
 }
