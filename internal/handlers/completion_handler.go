@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ollama/ollama/api"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/ollama"
 )
 
 // CompletionRequest is the request sent to the completion handler
@@ -67,21 +68,40 @@ func (p Prompt) Generate(templ *template.Template) string {
 	if err != nil {
 		log.Printf("error executing prompt template: %s", err.Error())
 	}
+	return buf.String()
+}
 
+// System is a representation of the system
+type System struct {
+	Language string
+}
+
+func (s System) Generate() string {
+	const tmpl = "You are an expert AI programming assistant for {{.Language}}. You write simple, concise code. Your task is to Fill-in-the-middle (FIM) or infill. Only output the code completion without any preamble, explanation, or markdown formatting."
+	t, err := template.New("system").Parse(tmpl)
+	if err != nil {
+		log.Printf("error parsing template: %s", err.Error())
+		return ""
+	}
+
+	var buf bytes.Buffer
+	err = t.Execute(&buf, s)
+	if err != nil {
+		log.Printf("error executing system template: %s", err.Error())
+	}
 	return buf.String()
 }
 
 // CompletionHandler is an http.Handler that returns completions.
 type CompletionHandler struct {
-	api        *api.Client
 	model      string
 	templ      *template.Template
 	numPredict int
 }
 
 // NewCompletionHandler returns a new CompletionHandler.
-func NewCompletionHandler(api *api.Client, model string, template *template.Template, numPredict int) *CompletionHandler {
-	return &CompletionHandler{api, model, template, numPredict}
+func NewCompletionHandler(model string, template *template.Template, numPredict int) *CompletionHandler {
+	return &CompletionHandler{model, template, numPredict}
 }
 
 // ServeHTTP implements http.Handler.
@@ -101,55 +121,59 @@ func (c *CompletionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	generate := api.GenerateRequest{
-		Model:  c.model,
-		Prompt: Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(c.templ),
-		Options: map[string]interface{}{
-			"temperature": req.Temperature,
-			"top_p":       req.TopP,
-			"stop":        req.Stop,
-			"num_predict": c.numPredict,
-		},
-	}
+	// Prepare system + prompt
+	systemPrompt := System{Language: req.Extra.Language}.Generate()
+	taskPrompt := Prompt{Prefix: req.Prompt, Suffix: req.Suffix}.Generate(c.templ)
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Second*60)
-	r = r.WithContext(ctx)
 	defer cancel()
+
+	// Initialize Ollama via LangChainGo
+	llm, err := ollama.New(ollama.WithModel(c.model))
+	if err != nil {
+		http.Error(w, "failed to initialize ollama", http.StatusInternalServerError)
+		return
+	}
+
 	doneChan := make(chan struct{})
-	err := c.api.Generate(r.Context(), &generate, func(resp api.GenerateResponse) error {
-		response := CompletionResponse{
-			Id:      uuid.New().String(),
-			Created: time.Now().Unix(),
-			Choices: []ChoiceResponse{
-				{
-					Text:  resp.Response,
-					Index: 0,
+
+	_, err = llms.GenerateFromSinglePrompt(
+		ctx,
+		llm,
+		systemPrompt+"\n\n"+taskPrompt,
+		llms.WithTemperature(req.Temperature),
+		llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
+			resp := CompletionResponse{
+				Id:      uuid.New().String(),
+				Created: time.Now().Unix(),
+				Choices: []ChoiceResponse{
+					{
+						Text:  string(chunk),
+						Index: 0,
+					},
 				},
-			},
-		}
+			}
 
-		_, err := w.Write([]byte("data: "))
-		if err != nil {
-			cancel()
-			return err
-		}
+			log.Printf("Ollama response chunk: %s", chunk)
 
-		err = json.NewEncoder(w).Encode(response)
-		if err != nil {
-			cancel()
-			return err
-		}
-		if resp.Done {
-			close(doneChan)
-		}
-
-		return nil
-	})
+			_, err := w.Write([]byte("data: "))
+			if err != nil {
+				cancel()
+				return err
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				cancel()
+				return err
+			}
+			return nil
+		}),
+	)
+	close(doneChan)
 
 	if err == nil {
 		select {
-		case <-r.Context().Done():
-			err = r.Context().Err()
+		case <-ctx.Done():
+			err = ctx.Err()
 		case <-doneChan:
 		}
 	}
